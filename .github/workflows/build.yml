@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore
+        run: dotnet restore src/Impostor.Plugins.AdminApi/Impostor.Plugins.AdminApi.csproj
+
+      - name: Build
+        run: dotnet build -c Release --no-restore src/Impostor.Plugins.AdminApi/Impostor.Plugins.AdminApi.csproj
+
+      - name: Publish
+        run: dotnet publish -c Release -o ./publish --no-build src/Impostor.Plugins.AdminApi/Impostor.Plugins.AdminApi.csproj
+
+      - name: Upload plugin DLL (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Impostor.Plugins.AdminApi
+          path: publish/Impostor.Plugins.AdminApi.dll
+          if-no-files-found: error
+
+      # Versioned release when pushing an explicit tag like v1.0.0
+      - name: Create versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publish/Impostor.Plugins.AdminApi.dll
+          draft: false
+
+      # Rolling "latest" pre-release on every push to main,
+      # giving users a stable wget-able URL without needing to tag.
+      - name: Update rolling latest release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "AdminApi plugin (latest)"
+          body: |
+            Automatically built from the most recent commit on `main`.
+
+            Download the DLL and drop it into your Impostor server's `plugins/`
+            folder. See the README for configuration details.
+          files: publish/Impostor.Plugins.AdminApi.dll
+          draft: false
+          prerelease: true
