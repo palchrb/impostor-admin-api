@@ -57,6 +57,16 @@ public class AdminEventBroadcaster : IEventListener
     }
 
     [EventListener]
+    public void OnGameStarting(IGameStartingEvent e)
+    {
+        _bus.Publish(new AdminEvent("game.starting", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            playerCount = e.Game.PlayerCount,
+        }));
+    }
+
+    [EventListener]
     public void OnGameStarted(IGameStartedEvent e)
     {
         _bus.Publish(new AdminEvent("game.started", DateTime.UtcNow, new
@@ -83,6 +93,35 @@ public class AdminEventBroadcaster : IEventListener
         {
             code = e.Game.Code.Code,
             isPublic = e.IsPublic,
+        }));
+    }
+
+    [EventListener]
+    public void OnGameHostChanged(IGameHostChangedEvent e)
+    {
+        _bus.Publish(new AdminEvent("game.hostChanged", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            previousHostClientId = e.PreviousHost.Client.Id,
+            previousHostName = e.PreviousHost.Client.Name,
+            newHostClientId = e.NewHost?.Client.Id,
+            newHostName = e.NewHost?.Client.Name,
+        }));
+    }
+
+    [EventListener]
+    public void OnGameOptionsChanged(IGameOptionsChangedEvent e)
+    {
+        var options = e.Game.Options;
+        _bus.Publish(new AdminEvent("game.optionsChanged", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            changedBy = e.ChangedBy.ToString(),
+            maxPlayers = options.MaxPlayers,
+            numImpostors = options.NumImpostors,
+            mapId = (int)options.Map,
+            gameMode = options.GameMode.ToString(),
+            languageKeywords = (long)options.Keywords,
         }));
     }
 
@@ -141,6 +180,47 @@ public class AdminEventBroadcaster : IEventListener
             killerName = e.PlayerControl.PlayerInfo?.PlayerName,
             victimName = e.Victim.PlayerInfo?.PlayerName,
             result = e.Result.ToString(),
+        }));
+    }
+
+    [EventListener]
+    public void OnPlayerStartMeeting(IPlayerStartMeetingEvent e)
+    {
+        var callerName = e.PlayerControl.PlayerInfo?.PlayerName ?? e.ClientPlayer.Client.Name;
+        _bus.Publish(new AdminEvent("meeting.called", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            callerClientId = e.ClientPlayer.Client.Id,
+            callerName,
+            // e.Body is null for an emergency button; non-null means a body was reported.
+            isEmergency = e.Body == null,
+            reportedBodyName = e.Body?.PlayerInfo?.PlayerName,
+        }));
+    }
+
+    [EventListener]
+    public void OnPlayerExile(IPlayerExileEvent e)
+    {
+        var name = e.PlayerControl.PlayerInfo?.PlayerName ?? e.ClientPlayer.Client.Name;
+        _bus.Publish(new AdminEvent("player.exiled", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            clientId = e.ClientPlayer.Client.Id,
+            name,
+        }));
+    }
+
+    [EventListener]
+    public void OnPlayerVoted(IPlayerVotedEvent e)
+    {
+        var voterName = e.PlayerControl.PlayerInfo?.PlayerName ?? e.ClientPlayer.Client.Name;
+        _bus.Publish(new AdminEvent("player.voted", DateTime.UtcNow, new
+        {
+            code = e.Game.Code.Code,
+            voterClientId = e.ClientPlayer.Client.Id,
+            voterName,
+            voteType = e.VoteType.ToString(),
+            votedForName = e.VotedFor?.PlayerInfo?.PlayerName,
         }));
     }
 
