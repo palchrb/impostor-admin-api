@@ -43,7 +43,7 @@ JSON-on-disk ban list and an in-memory chat ring buffer.
 - [Event types](#event-types)
 - [Persistence](#persistence)
 - [Security notes](#security-notes)
-- [Development](#development)
+- [Development and releases](#development-and-releases)
 
 ---
 
@@ -71,15 +71,21 @@ JSON-on-disk ban list and an in-memory chat ring buffer.
 
 ### Download a pre-built DLL
 
-Every push to `main` updates a rolling pre-release tagged `latest`, so you can
-always grab the freshest build from a stable URL:
+Releases are cut by pushing a `v*` tag. The CI workflow builds the plugin and
+attaches `Impostor.Plugins.AdminApi.dll` to the matching GitHub release, so you
+can grab a stable URL per version:
 
 ```sh
-wget https://github.com/palchrb/impostor-admin-api/releases/download/latest/Impostor.Plugins.AdminApi.dll
+wget https://github.com/palchrb/impostor-admin-api/releases/download/v1.0.0/Impostor.Plugins.AdminApi.dll
 ```
 
-For pinned, versioned releases, push a tag like `v1.0.0` and the workflow
-publishes a regular GitHub release with the DLL attached.
+The latest release page is always at
+[`/releases/latest`](https://github.com/palchrb/impostor-admin-api/releases/latest).
+
+If you just want the current `main` build without cutting a tag, every push to
+`main` runs the workflow and uploads `Impostor.Plugins.AdminApi.dll` as a build
+artifact; download it from the run page on the
+[Actions tab](https://github.com/palchrb/impostor-admin-api/actions).
 
 ### Build from source
 
@@ -515,7 +521,9 @@ back-pressure the publisher.
 
 ---
 
-## Development
+## Development and releases
+
+Local build commands:
 
 ```sh
 # Restore + build
@@ -526,10 +534,25 @@ dotnet publish -c Release -o ./publish \
   src/Impostor.Plugins.AdminApi/Impostor.Plugins.AdminApi.csproj
 ```
 
-Continuous integration lives in
-[`.github/workflows/build.yml`](.github/workflows/build.yml). It runs on every
-push to `main`, on every PR, and on tags matching `v*`. Each `main` build
-publishes `Impostor.Plugins.AdminApi.dll` to the rolling `latest` pre-release;
-each `v*` tag publishes a regular release.
+CI lives in [`.github/workflows/build.yml`](.github/workflows/build.yml) and
+runs in two modes:
+
+- **Push to `main`**: builds the plugin and uploads
+  `Impostor.Plugins.AdminApi.dll` as a workflow artifact. Nothing is published
+  to Releases.
+- **Push of a `v*` tag** (e.g. `v1.0.0`): builds the plugin, then creates the
+  matching GitHub release (or updates it) and attaches the DLL as a release
+  asset.
+
+Typical release flow:
+
+```sh
+# Make sure main is green, then cut a release tag
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow picks up the tag, builds, and uploads
+`Impostor.Plugins.AdminApi.dll` to the `v1.0.0` release.
 
 Pull requests welcome.
