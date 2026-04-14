@@ -450,24 +450,79 @@ public class AdminApiHost : BackgroundService
             return;
         }
 
+        var heartbeatSeconds = _config.SseHeartbeatSeconds;
+        var heartbeatInterval = heartbeatSeconds > 0
+            ? TimeSpan.FromSeconds(heartbeatSeconds)
+            : Timeout.InfiniteTimeSpan;
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                AdminEvent evt;
+                // Drain anything already buffered before blocking.
+                while (subscription.Reader.TryRead(out var queued))
+                {
+                    if (!await TryWriteSseEventAsync(response, queued.Type, queued))
+                    {
+                        return;
+                    }
+                }
+
+                // Wait for either the next event or the heartbeat tick.
+                using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var waitTask = subscription.Reader.WaitToReadAsync(tickCts.Token).AsTask();
+                var completed = waitTask;
+
+                if (heartbeatInterval != Timeout.InfiniteTimeSpan)
+                {
+                    var delayTask = Task.Delay(heartbeatInterval, tickCts.Token);
+                    completed = await Task.WhenAny(waitTask, delayTask);
+
+                    // Cancel the loser so it doesn't leak; swallow its OperationCanceledException.
+                    tickCts.Cancel();
+                    if (completed == delayTask)
+                    {
+                        try { await waitTask; } catch { /* cancelled or channel closed */ }
+
+                        if (!await TryWriteSseCommentAsync(response, "heartbeat"))
+                        {
+                            return;
+                        }
+
+                        continue;
+                    }
+
+                    try { await delayTask; } catch { /* cancelled */ }
+                }
+                else
+                {
+                    try
+                    {
+                        await waitTask;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+
+                // waitTask completed successfully - there's either data or the channel closed.
+                bool hasData;
                 try
                 {
-                    evt = await subscription.Reader.ReadAsync(stoppingToken);
+                    hasData = await waitTask;
                 }
-                catch (OperationCanceledException)
+                catch
                 {
                     break;
                 }
 
-                if (!await TryWriteSseEventAsync(response, evt.Type, evt))
+                if (!hasData)
                 {
                     break;
                 }
+
+                // Loop iteration will drain via TryRead at the top.
             }
         }
         finally
@@ -497,6 +552,25 @@ public class AdminApiHost : BackgroundService
         catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException or IOException)
         {
             _logger.LogDebug(ex, "SSE client disconnected");
+            return false;
+        }
+    }
+
+    private async Task<bool> TryWriteSseCommentAsync(HttpListenerResponse response, string comment)
+    {
+        try
+        {
+            // SSE comment lines start with ':' and are ignored by spec-compliant clients
+            // (EventSource in browsers). They keep the TCP connection warm and let
+            // intermediate proxies know the stream is still alive.
+            var bytes = Encoding.UTF8.GetBytes($": {comment}\n\n");
+            await response.OutputStream.WriteAsync(bytes);
+            await response.OutputStream.FlushAsync();
+            return true;
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException or IOException)
+        {
+            _logger.LogDebug(ex, "SSE client disconnected during heartbeat");
             return false;
         }
     }
