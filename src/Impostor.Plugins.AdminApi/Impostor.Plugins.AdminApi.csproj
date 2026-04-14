@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+
+    <Version>1.0.0</Version>
+    <AssemblyTitle>Impostor Admin API</AssemblyTitle>
+    <Authors>palchrb</Authors>
+    <Nullable>enable</Nullable>
+
+    <!--
+      When deployed as an Impostor plugin, only the plugin DLL itself is copied
+      into the server's `plugins/` folder. Impostor.Api and hosting dependencies
+      are already provided by the host, so we do not want to ship lock-file
+      assemblies alongside the plugin.
+    -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Impostor.Api is published on NuGet.org so the plugin builds standalone
+      without needing the full Impostor source tree. Bump this version to match
+      the server version you want to target.
+    -->
+    <PackageReference Include="Impostor.Api" Version="1.10.4" />
+
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
