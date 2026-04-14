@@ -33,4 +33,13 @@ public class AdminApiConfig
     /// Number of recent chat messages to keep in the in-memory buffer.
     /// </summary>
     public int ChatLogBufferSize { get; set; } = 1000;
+
+    /// <summary>
+    /// How often (in seconds) to emit a ":heartbeat" SSE comment on idle
+    /// /admin/events connections. Heartbeats keep reverse proxies (nginx,
+    /// Cloudflare, etc.) from closing the connection as idle and let the
+    /// server detect disappeared clients via write errors. Set to 0 to
+    /// disable heartbeats entirely.
+    /// </summary>
+    public int SseHeartbeatSeconds { get; set; } = 15;
 }
