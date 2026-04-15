@@ -218,8 +218,10 @@ public class AdminApiHost : BackgroundService
         catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException or IOException)
         {
             // Caller (HTTP client) disconnected before we could complete the response.
-            // This is not actionable, log as debug to avoid noisy ERR entries.
-            _logger.LogDebug(ex, "Admin API request aborted by caller");
+            // This is benign and happens routinely when a browser reloads, an EventSource
+            // reconnects, etc. Keep the log compact (no stack trace) so it doesn't look
+            // like an error.
+            _logger.LogDebug("Admin API request aborted by caller: {Reason}", ex.Message);
         }
         catch (Exception ex)
         {
@@ -438,7 +440,7 @@ public class AdminApiHost : BackgroundService
         }
         catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException)
         {
-            _logger.LogDebug(ex, "SSE client disconnected before stream could start");
+            _logger.LogDebug("SSE client disconnected before stream could start: {Reason}", ex.Message);
             return;
         }
 
@@ -555,7 +557,7 @@ public class AdminApiHost : BackgroundService
         }
         catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException or IOException)
         {
-            _logger.LogDebug(ex, "SSE client disconnected");
+            _logger.LogDebug("SSE client disconnected: {Reason}", ex.Message);
             return false;
         }
     }
@@ -574,7 +576,9 @@ public class AdminApiHost : BackgroundService
         }
         catch (Exception ex) when (ex is ObjectDisposedException or HttpListenerException or IOException)
         {
-            _logger.LogDebug(ex, "SSE client disconnected during heartbeat");
+            // Expected when the client has gone away; we discover it on the next heartbeat
+            // write. Log compactly so it doesn't look like an unhandled exception.
+            _logger.LogDebug("SSE client disconnected during heartbeat: {Reason}", ex.Message);
             return false;
         }
     }
@@ -663,8 +667,8 @@ public class AdminApiHost : BackgroundService
         {
             // Caller closed the connection (or HttpListener disposed the
             // response while we were doing async work). Nothing actionable -
-            // log as debug rather than letting the outer handler log ERR.
-            _logger.LogDebug(ex, "Could not send Admin API response (caller disconnected)");
+            // log compactly rather than letting the outer handler log ERR.
+            _logger.LogDebug("Could not send Admin API response (caller disconnected): {Reason}", ex.Message);
         }
         finally
         {
