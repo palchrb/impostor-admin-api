@@ -61,9 +61,14 @@ JSON-on-disk ban list and an in-memory chat ring buffer.
     currently connected clients on a newly banned IP are kicked.
 - **Chat log**: in-memory ring buffer of recent chat messages, queryable
   globally or per game.
-- **Live event stream**: SSE feed with `client.connected`, `game.created`,
-  `game.started`, `game.ended`, `player.joined`, `player.left`, `chat`,
-  `player.murder`, `meeting.started`, `meeting.ended` and more.
+- **Live event stream**: SSE feed with lobby lifecycle events
+  (`game.created`, `game.starting`, `game.started`, `game.ended`,
+  `game.destroyed`, `game.privacyChanged`, `game.hostChanged`,
+  `game.optionsChanged`), player events (`player.joined`, `player.left`,
+  `player.joining.rejected`, `player.murder`, `player.exiled`,
+  `player.voted`), meeting events (`meeting.called`, `meeting.started`,
+  `meeting.ended`) and `chat` messages. Configurable heartbeat keeps the
+  stream alive through reverse proxies.
 
 ---
 
@@ -139,14 +144,15 @@ the container, but Docker only exposes it on the host's loopback. See
 The plugin reads its options from the standard Impostor `config.json`, under an
 `AdminApi` section. All fields are optional and have sensible defaults.
 
-| Field               | Type    | Default                          | Description |
-|---------------------|---------|----------------------------------|-------------|
-| `Enabled`           | bool    | `true`                           | Master switch. When false the listener never starts. |
-| `ListenIp`          | string  | `"0.0.0.0"`                      | Bind address. `0.0.0.0` listens on all interfaces (use the Docker port mapping to limit exposure); `127.0.0.1` restricts to loopback. |
-| `ListenPort`        | int     | `8081`                           | TCP port for the HTTP listener. |
-| `ApiKey`            | string  | `""`                             | If non-empty, every request must include `X-Admin-Key: <key>`. Empty disables auth - only safe behind a firewall or 127.0.0.1 port mapping. |
-| `BanListPath`       | string  | `"libraries/adminapi/bans.json"` | Where to persist the ban list. Set to `""` to keep bans in memory only (cleared on restart). The directory is created automatically. |
-| `ChatLogBufferSize` | int     | `1000`                           | Number of recent chat messages kept in the in-memory ring buffer. |
+| Field                 | Type    | Default                          | Description |
+|-----------------------|---------|----------------------------------|-------------|
+| `Enabled`             | bool    | `true`                           | Master switch. When false the listener never starts. |
+| `ListenIp`            | string  | `"0.0.0.0"`                      | Bind address. `0.0.0.0` listens on all interfaces (use the Docker port mapping to limit exposure); `127.0.0.1` restricts to loopback. |
+| `ListenPort`          | int     | `8081`                           | TCP port for the HTTP listener. |
+| `ApiKey`              | string  | `""`                             | If non-empty, every request must include `X-Admin-Key: <key>`. Empty disables auth - only safe behind a firewall or 127.0.0.1 port mapping. |
+| `BanListPath`         | string  | `"libraries/adminapi/bans.json"` | Where to persist the ban list. Set to `""` to keep bans in memory only (cleared on restart). The directory is created automatically. |
+| `ChatLogBufferSize`   | int     | `1000`                           | Number of recent chat messages kept in the in-memory ring buffer. |
+| `SseHeartbeatSeconds` | int     | `15`                             | How often to emit a `:heartbeat` comment on idle `/admin/events` connections so reverse proxies don't time them out. Set to `0` to disable. |
 
 ### Example `config.json`
 
@@ -163,7 +169,8 @@ The plugin reads its options from the standard Impostor `config.json`, under an
     "ListenPort": 8081,
     "ApiKey": "change-me-to-a-long-random-string",
     "BanListPath": "libraries/adminapi/bans.json",
-    "ChatLogBufferSize": 1000
+    "ChatLogBufferSize": 1000,
+    "SseHeartbeatSeconds": 15
   }
 }
 ```
@@ -473,25 +480,47 @@ The internal channel is bounded to 100 events per subscriber with
 `DropOldest` semantics, so a slow consumer will lose old events rather than
 back-pressure the publisher.
 
+**Heartbeats.** When there is no traffic for `SseHeartbeatSeconds` (default
+15 s), the server writes an SSE comment line:
+
+```
+: heartbeat
+
+```
+
+Comment lines (those starting with `:`) are [ignored by spec-compliant SSE
+clients](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#event_stream_format)
+like the browser `EventSource`, but they keep the TCP connection warm so
+reverse proxies (nginx, Cloudflare, Traefik) don't time out idle streams, and
+they let the server detect dead clients on write. Set `SseHeartbeatSeconds`
+to `0` to disable.
+
 ---
 
 ## Event types
 
-| `type`                  | When it fires                                          |
-|-------------------------|--------------------------------------------------------|
-| `hello`                 | Once, on subscription start.                           |
-| `client.connected`      | A new client connected to the server.                  |
-| `game.created`          | A lobby was created.                                   |
-| `game.destroyed`        | A game ended and was disposed.                         |
-| `game.started`          | The host pressed start.                                |
-| `game.ended`            | The game finished (with `reason`).                     |
-| `game.privacyChanged`   | Host toggled public/private.                           |
-| `player.joined`         | A player joined a game.                                |
-| `player.left`           | A player left a game.                                  |
-| `chat`                  | A chat message was sent (also added to the chat log).  |
-| `player.murder`         | A player was murdered (with killer/victim names).      |
-| `meeting.started`       | A meeting started.                                     |
-| `meeting.ended`         | A meeting ended (with exiled player and tie flag).     |
+| `type`                    | When it fires                                                                 |
+|---------------------------|-------------------------------------------------------------------------------|
+| `hello`                   | Once, on subscription start.                                                  |
+| `client.connected`        | A new client connected to the server.                                         |
+| `game.created`            | A lobby was created.                                                          |
+| `game.destroyed`          | A game ended and was disposed.                                                |
+| `game.starting`           | A lobby entered countdown / pre-start phase.                                  |
+| `game.started`            | The host pressed start and the round is running.                              |
+| `game.ended`              | The game finished (with `reason`).                                            |
+| `game.privacyChanged`     | Host toggled public/private.                                                  |
+| `game.hostChanged`        | Host migrated to another player (`previousHost*`, `newHost*`).                |
+| `game.optionsChanged`     | Game settings changed. `changedBy` is `Host` or `Api`; payload includes the new options snapshot. |
+| `player.joined`           | A player joined a game.                                                       |
+| `player.left`             | A player left a game.                                                         |
+| `player.joining.rejected` | A join attempt was blocked (currently only for banned IPs). Includes `code`, `clientId`, `name`, `ip`, `reason`. |
+| `chat`                    | A chat message was sent (also added to the chat log).                         |
+| `player.murder`           | A player was murdered (with killer/victim names).                             |
+| `meeting.called`          | A player called a meeting. `isEmergency` = true for the emergency button; otherwise `reportedBodyName` is set. |
+| `meeting.started`         | A meeting started.                                                            |
+| `meeting.ended`           | A meeting ended (with `exiledName` and `isTie`).                              |
+| `player.exiled`           | A player was voted out during a meeting.                                      |
+| `player.voted`            | A player cast a vote. `voteType`: `Skipped`, `Missed`, `Dead`, `Player` or `HasNotVoted`; `votedForName` is set only when `voteType=Player`. |
 
 ---
 
