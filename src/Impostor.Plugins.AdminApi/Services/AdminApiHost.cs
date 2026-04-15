@@ -468,61 +468,65 @@ public class AdminApiHost : BackgroundService
                     }
                 }
 
-                // Wait for either the next event or the heartbeat tick.
                 using var tickCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 var waitTask = subscription.Reader.WaitToReadAsync(tickCts.Token).AsTask();
-                var completed = waitTask;
 
-                if (heartbeatInterval != Timeout.InfiniteTimeSpan)
+                if (heartbeatInterval == Timeout.InfiniteTimeSpan)
                 {
-                    var delayTask = Task.Delay(heartbeatInterval, tickCts.Token);
-                    completed = await Task.WhenAny(waitTask, delayTask);
-
-                    // Cancel the loser so it doesn't leak; swallow its OperationCanceledException.
-                    tickCts.Cancel();
-                    if (completed == delayTask)
-                    {
-                        try { await waitTask; } catch { /* cancelled or channel closed */ }
-
-                        if (!await TryWriteSseCommentAsync(response, "heartbeat"))
-                        {
-                            return;
-                        }
-
-                        continue;
-                    }
-
-                    try { await delayTask; } catch { /* cancelled */ }
-                }
-                else
-                {
+                    bool hasData;
                     try
                     {
-                        await waitTask;
+                        hasData = await waitTask;
                     }
                     catch (OperationCanceledException)
                     {
                         break;
                     }
+
+                    if (!hasData)
+                    {
+                        break;
+                    }
+
+                    continue;
                 }
 
-                // waitTask completed successfully - there's either data or the channel closed.
-                bool hasData;
+                var delayTask = Task.Delay(heartbeatInterval, tickCts.Token);
+                Task completed = await Task.WhenAny(waitTask, delayTask);
+                tickCts.Cancel();
+
+                if (completed == delayTask)
+                {
+                    // Heartbeat tick - cancel the pending wait and send the keepalive.
+                    try { await waitTask; } catch { /* cancelled or channel closed */ }
+
+                    if (!await TryWriteSseCommentAsync(response, "heartbeat"))
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                // An event became available - drop the delay and check the result.
+                try { await delayTask; } catch { /* cancelled */ }
+
+                bool hasEvent;
                 try
                 {
-                    hasData = await waitTask;
+                    hasEvent = await waitTask;
                 }
-                catch
+                catch (OperationCanceledException)
                 {
                     break;
                 }
 
-                if (!hasData)
+                if (!hasEvent)
                 {
                     break;
                 }
 
-                // Loop iteration will drain via TryRead at the top.
+                // The next loop iteration will drain the buffered event(s).
             }
         }
         finally
